@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# PRAW username/password for local configuration only
+# https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html#praw-ini
+praw.ini
