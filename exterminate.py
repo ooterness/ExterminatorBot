@@ -10,7 +10,8 @@ For more information, refer to the instructions here:
 https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html#praw-ini
 """
 
-import os, PIL, praw, requests, queue, sys, threading
+import os, praw, queue, sys, threading
+import lib_images
 from traceback import print_exc
 
 class Exterminator:
@@ -25,6 +26,7 @@ class Exterminator:
         )
         # Select source subreddits by name.
         self.src = self.reddit.subreddit('+'.join(subreddits))
+        self.cmp = lib_images.TitleSearch(self.src)
         # Initialize the work queue.
         self.pool = []
         self.run  = True
@@ -58,7 +60,7 @@ class Exterminator:
             try:
                 self.process(sub)
             except:
-                print(f'While processing {sub.url}')
+                print(f'While processing {sub.permalink}')
                 print_exc(file=sys.stderr)
             finally:
                 self.work.task_done()
@@ -80,17 +82,10 @@ class Exterminator:
 
     def process(self, sub):
         """Process a submission object."""
-        print(f'Processing post: {sub.title} by {sub.author}')
-        self.save(sub)
-        # TODO: Actually do some work?
-
-    def save(self, sub, path='temp'):
-        """Save linked image as a temporary file."""
-        image = requests.get(sub.url)
-        if not os.path.exists(path): os.makedirs(path)
-        out_name = os.path.join(path, os.path.basename(sub.url))
-        with open(out_name, 'wb') as out_file:
-            out_file.write(image.content)
+        print(f'Processing post: {sub.permalink}')
+        # Search for potential matches.
+        alt_img, alt_score = self.cmp.compare(sub)
+        print(f'Best match: {alt_img.permalink} ({100*alt_score:.1f})')
 
     def run_batch(self, limit=10):
         """Run this bot on the last N submissions."""
