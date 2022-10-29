@@ -8,7 +8,7 @@ Includes tools for downloading image data, comparing images, and
 searching for related images in the same subreddit.
 """
 
-import cv2, praw, requests
+import cv2, os, praw, requests
 import numpy as np
 
 # Shared objects for SIFT processing.
@@ -18,17 +18,36 @@ flann = cv2.FlannBasedMatcher(
     dict(),                         # Search parameters
 )
 
+def is_image(sub):
+    """Is this submission a valid image post?"""
+    # Ignore text posts and non-Reddit image hosts.
+    # TODO: Support for albums? For now, only single images.
+    if sub.is_self: return False    # Ignore text-only posts
+    if not 'i.redd.it' in sub.url: return False
+    # Is the link to a supported file format?
+    # TODO: Use MIME headers instead of guessing from extension?
+    [name, ext] = os.path.splitext(sub.url)
+    if not ext in ['.jpg', '.png']: return False
+    return True                     # All checks OK
+
 class ImageObject:
     """An image associated with a Reddit submission."""
     def __init__(self, sub):
         """Create an object from the designated submission."""
+        print(f'Loading {sub.permalink}')
         self.req = requests.get(sub.url)
         self.sub = sub
 
     def cv(self):
         """Convert image data to OpenCV format."""
+        # Open and decode the image file.
         data = np.frombuffer(self.req.content, np.uint8)
-        return cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
+        image = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
+        # Downsample large images to a more reasonable size.
+        while min(image.shape) > 512:
+            new_size = (image.shape[0]//2, image.shape[1]//2)
+            image = cv2.resize(image, new_size)
+        return image
 
     def sift(self, flip=False):
         """Calculate SIFT keypoints for this image."""
@@ -49,9 +68,11 @@ class ImageObject:
 def compare(ref, alt):
     """Given a reference submission, calculate similarity score with
        the designated list of alternates.  (All PRAW submissions.)"""
+    # Sanity check for empty lists.
+    if len(alt) == 0: return None, 0.0
     # Load the image data for each submission.
     img_ref = ImageObject(ref)
-    img_alt = [ImageObject(sub) for sub in alt if ref != sub]
+    img_alt = [ImageObject(sub) for sub in alt]
     # Keypoint detection and matching on each image object.
     # Note: SIFT is invariant to rotation but not mirroring, so try both.
     kp_ref, dsc_ref = img_ref.sift(False)   # Original
@@ -95,5 +116,6 @@ class TitleSearch:
         for item in listing:
             if len(results) >= limit: break # Reached max length?
             if item == sub: continue        # Ignore self-matches
+            if not is_image(item): continue # Ignore non-images
             results.append(item)            # Otherwise add to list
         return results

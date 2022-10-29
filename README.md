@@ -15,4 +15,5 @@ If these experiments succeed, the next step is to contact moderators of specific
 If they opt-in, then high-confidence alarms may post comments, file reports, or take other actions.
 
 # Contact
-Interested in helping? Or having this bot help with your subreddit? [PM the bot's Reddit account](https://www.reddit.com/user/ExterminatorBot).
+Interested in helping? Or having this bot help moderate your subreddit?
+[Please PM the bot's Reddit account](https://www.reddit.com/user/ExterminatorBot).

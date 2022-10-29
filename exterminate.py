@@ -11,7 +11,7 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 """
 
 import os, praw, queue, sys, threading
-import lib_images
+from lib_images import is_image, TitleSearch
 from traceback import print_exc
 
 class Exterminator:
@@ -26,7 +26,7 @@ class Exterminator:
         )
         # Select source subreddits by name.
         self.src = self.reddit.subreddit('+'.join(subreddits))
-        self.cmp = lib_images.TitleSearch(self.src)
+        self.cmp = TitleSearch(self.src)
         # Initialize the work queue.
         self.pool = []
         self.run  = True
@@ -39,10 +39,10 @@ class Exterminator:
             self.pool.append(thread)
 
     def close(self):
-        """Stop all worker threads."""
+        """Stop all worker threads and purge work queue."""
+        print('Closing. Please wait...')
         self.run = False
-        for thread in self.pool:
-            thread.join()
+        with self.work.mutex: self.work.queue.clear()
 
     def wait(self):
         """Wait for all currently queued work to finish."""
@@ -56,11 +56,16 @@ class Exterminator:
     def work_fn(self):
         """Main work loop.  Do not call directly."""
         while self.run:
-            sub = self.work.get()
             try:
+                # Attempt to process the next task.
+                sub = self.work.get()
                 self.process(sub)
-            except:
-                print(f'While processing {sub.permalink}')
+            except KeyboardInterrupt:
+                # User-requested exit, stop all threads.
+                self.close()
+            except Exception:
+                # Log ordinary errors, but resume processing.
+                print(f'Error processing {sub.permalink}')
                 print_exc(file=sys.stderr)
             finally:
                 self.work.task_done()
@@ -68,24 +73,22 @@ class Exterminator:
     def enqueue(self, sub):
         """Queue a submission object for processing."""
         # Quick filtering before we start...
-        if sub.is_self: return False    # Ignore text-only posts
-        if sub.locked: return False     # Already has moderator attention
-        if sub.stickied: return False   # Already has moderator attention
-        if not 'i.redd.it' in sub.url: return False
-        # Is the link to a supported file format?
-        # TODO: Use MIME headers instead of guessing from extension?
-        [name, ext] = os.path.splitext(sub.url)
-        if not ext in ['.jpg', '.png']: return False
+        if sub.locked: return False         # Already has moderator attention
+        if sub.stickied: return False       # Already has moderator attention
+        if not is_image(sub): return False  # Links to a supported image?
         # Otherwise, queue the object for later processing.
-        self.work.put(sub)              # Add object to work queue
-        return True                     # Accepted for processing
+        self.work.put(sub)                  # Add object to work queue
+        return True                         # Accepted for processing
 
     def process(self, sub):
         """Process a submission object."""
         print(f'Processing post: {sub.permalink}')
         # Search for potential matches.
         alt_img, alt_score = self.cmp.compare(sub)
-        print(f'Best match: {alt_img.permalink} ({100*alt_score:.1f})')
+        if alt_img is None:
+            print(f'No search results for title "{sub.title}"')
+        else:
+            print(f'Best match ({100*alt_score:.1f}): {alt_img.permalink}')
 
     def run_batch(self, limit=10):
         """Run this bot on the last N submissions."""
@@ -131,6 +134,7 @@ if __name__ == '__main__':
             print(f'Processing {count} of {args.limit} posts...')
             my_bot.wait()
     except KeyboardInterrupt:
+        print('Exiting...')
         sys.exit(0)     # Not an error, just exit.
     except Exception:
         print_exc(file=sys.stderr)
