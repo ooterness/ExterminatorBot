@@ -12,10 +12,16 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 
 import os, praw, queue, sys, threading
 from lib_images import is_image, TitleSearch
+from lib_users import Suspicion
 from traceback import print_exc
 
+# Default configuration options.
+DEFAULT_RUN_LIMIT       = 10    # Number of posts to process in batch mode
+DEFAULT_SEARCH_DEPTH    = 3     # Number of image results to cross-check
+DEFAULT_WORK_THREADS    = 1     # Number of worker threads
+
 class Exterminator:
-    def __init__(self, username, subreddits, threads=1):
+    def __init__(self, username, subreddits, threads=DEFAULT_WORK_THREADS):
         """
         Create object and open a connection to Reddit servers.
         Credentials are pulled from the specified section of "praw.ini".
@@ -27,6 +33,8 @@ class Exterminator:
         # Select source subreddits by name.
         self.src = self.reddit.subreddit('+'.join(subreddits))
         self.cmp = TitleSearch(self.src)
+        # Set default options.
+        self.search = DEFAULT_SEARCH_DEPTH
         # Initialize the work queue.
         self.pool = []
         self.run  = True
@@ -37,6 +45,10 @@ class Exterminator:
             thread.daemon = True
             thread.start()
             self.pool.append(thread)
+
+    def set_search_depth(self, depth):
+        """Set the number of images to cross-check in search results."""
+        self.search = depth
 
     def close(self):
         """Stop all worker threads and purge work queue."""
@@ -84,17 +96,21 @@ class Exterminator:
         """Process a submission object."""
         print(f'Processing post: {sub.permalink}')
         # Search for potential matches.
-        alt_img, alt_score = self.cmp.compare(sub)
+        sus_score = Suspicion(sub.author).score_overall()
+        print(f'User suspicion {100*sus_score:.1f}')
+        # TODO: Early termination if user score is OK?
+        alt_img, alt_score = self.cmp.compare(sub, limit=self.search)
         if alt_img is None:
             print(f'No search results for title "{sub.title}"')
         else:
-            print(f'Best match ({100*alt_score:.1f}): {alt_img.permalink}')
+            print(f'Best match ({100*alt_score:.1f}, {100*sus_score:0.1f}): {alt_img.permalink}')
 
-    def run_batch(self, limit=10):
-        """Run this bot on the last N submissions."""
+    def run_batch(self, limit):
+        """Run this bot on the last N image submissions."""
         count = 0
-        for sub in self.src.new(limit=limit):
+        for sub in self.src.new():
             if self.enqueue(sub): count += 1
+            if count >= limit: break
         return count
 
     def run_forever(self):
@@ -111,9 +127,11 @@ if __name__ == '__main__':
         help='List of subreddit(s) to be monitored.')
     parser.add_argument('--forever', action='store_true',
         help='Run forever. Ignores "limit" if set.')
-    parser.add_argument('--limit', type=int, default=10,
-        help='Set the number of posts to process.')
-    parser.add_argument('--threads', type=int, default=1,
+    parser.add_argument('--limit', type=int, default=DEFAULT_RUN_LIMIT,
+        help='Set the number of posts to process in batch mode.')
+    parser.add_argument('--search', type=int, default=DEFAULT_SEARCH_DEPTH,
+        help='Set the number of search results to process.')
+    parser.add_argument('--threads', type=int, default=DEFAULT_WORK_THREADS,
         help='Set the number of worker threads.')
     parser.add_argument('--user', type=str, required=True,
         help='Reddit username and praw.ini label for login credentials.')
@@ -121,6 +139,7 @@ if __name__ == '__main__':
 
     # Initial setup.
     my_bot = Exterminator(args.user, args.subs, args.threads)
+    my_bot.set_search_depth(args.search)
     my_bot.login_test()
 
     # Run the main loop.
@@ -131,7 +150,6 @@ if __name__ == '__main__':
         else:
             print(f'Fetching {args.limit} posts...')
             count = my_bot.run_batch(limit=args.limit)
-            print(f'Processing {count} of {args.limit} posts...')
             my_bot.wait()
     except KeyboardInterrupt:
         print('Exiting...')

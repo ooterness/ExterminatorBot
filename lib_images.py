@@ -8,7 +8,7 @@ Includes tools for downloading image data, comparing images, and
 searching for related images in the same subreddit.
 """
 
-import cv2, os, praw, requests
+import cv2, os, requests
 import numpy as np
 
 # Shared objects for SIFT processing.
@@ -19,16 +19,17 @@ flann = cv2.FlannBasedMatcher(
 )
 
 def is_image(sub):
-    """Is this submission a valid image post?"""
+    """Is this comment/submission a valid image post?"""
     # Ignore text posts and non-Reddit image hosts.
     # TODO: Support for albums? For now, only single images.
-    if sub.is_self: return False    # Ignore text-only posts
-    if not 'i.redd.it' in sub.url: return False
+    if hasattr(sub, 'body'): return False           # Ignore comments
+    if sub.is_self: return False                    # Ignore text posts
+    if not 'i.redd.it' in sub.url: return False     # Ignore other hosts
     # Is the link to a supported file format?
     # TODO: Use MIME headers instead of guessing from extension?
-    [name, ext] = os.path.splitext(sub.url)
-    if not ext in ['.jpg', '.png']: return False
-    return True                     # All checks OK
+    [name, ext] = os.path.splitext(sub.url)         # Extension from URL
+    if not ext in ['.jpg', '.png']: return False    # Unsupported image?
+    return True                                     # All checks OK
 
 class ImageObject:
     """An image associated with a Reddit submission."""
@@ -66,8 +67,11 @@ class ImageObject:
             out_file.write(req.content)
 
 def compare(ref, alt):
-    """Given a reference submission, calculate similarity score with
-       the designated list of alternates.  (All PRAW submissions.)"""
+    """
+    Given a reference submission, calculate similarity score with
+    the designated list of alternates.  (All PRAW submissions.)
+    Returns the best match, plus a confidence ranking (0 to 1).
+    """
     # Sanity check for empty lists.
     if len(alt) == 0: return None, 0.0
     # Load the image data for each submission.
@@ -105,11 +109,12 @@ class TitleSearch:
         """Create search context for the designated subreddit(s)."""
         self.src = subreddit                # Subreddit(s) to search
 
-    def compare(self, sub, limit=10):
+    def compare(self, sub, limit):
+        """Given a Reddit submission, search and cross-check the top N images."""
         alt = self.search(sub, limit)       # Execute search
         return compare(sub, alt)            # Return the best match
 
-    def search(self, sub, limit=10):
+    def search(self, sub, limit):
         """Given a Reddit submission, search for related titles."""
         listing = self.src.search(query=sub.title)
         results = []
