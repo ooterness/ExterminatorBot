@@ -37,9 +37,9 @@ def is_image(sub):
 
 class ImageObject:
     """An image associated with a Reddit submission."""
-    def __init__(self, sub):
+    def __init__(self, sub, verbose=False):
         """Create an object from the designated submission."""
-        print(f'Loading {sub.permalink}')
+        if verbose: print(f'Loading {sub.permalink}')
         self.req = requests.get(sub.url)
         self.sub = sub
 
@@ -70,7 +70,7 @@ class ImageObject:
         with open(out_name, 'wb') as out_file:
             out_file.write(req.content)
 
-def compare(ref, alt):
+def compare(ref, alt, verbose=False):
     """
     Given a reference submission, calculate similarity score with
     the designated list of alternates.  (All PRAW submissions.)
@@ -79,12 +79,12 @@ def compare(ref, alt):
     # Sanity check for empty lists.
     if len(alt) == 0: return None, 0.0
     # Load the image data for each submission.
-    img_ref = ImageObject(ref)
-    img_alt = [ImageObject(sub) for sub in alt]
+    img_ref = ImageObject(ref, verbose)
+    img_alt = [ImageObject(sub, verbose) for sub in alt]
     # Keypoint detection and matching on each image object.
     # Note: SIFT is invariant to rotation but not mirroring, so try both.
-    kp_ref, dsc_ref = img_ref.sift(False)   # Original
-    kp_rem, dsc_rem = img_ref.sift(True)    # Mirror
+    kp_ref, dsc_ref = img_ref.sift(False)           # Original
+    kp_rem, dsc_rem = img_ref.sift(True)            # Mirror
     best_index = 0
     best_score = 0.0
     for (n, img) in enumerate(img_alt):
@@ -109,29 +109,30 @@ def compare(ref, alt):
 
 class TitleSearch:
     """Find submissions with a similar title to a given submission."""
-    def __init__(self, subreddit):
+    def __init__(self, subreddit, verbose=False):
         """Create search context for the designated subreddit(s)."""
-        self.src = subreddit                # Subreddit(s) to search
+        self.src = subreddit                        # Subreddit(s) to search
+        self.verbose = verbose
 
     def compare(self, sub, limit):
         """Given a Reddit submission, search and cross-check the top N images."""
-        alt = self.search(sub, limit)       # Execute search
-        return compare(sub, alt)            # Return the best match
+        alt = self.search(sub, limit)               # Execute search
+        return compare(sub, alt, self.verbose)      # Return the best match
 
     def search(self, sub, limit):
         """Given a Reddit submission, search for related titles."""
         listing = self.src.search(query=sub.title)
         results = []
         for item in listing:
-            if len(results) >= limit: break # Reached max length?
-            if item == sub: continue        # Ignore self-matches
-            if not is_image(item): continue # Ignore non-images
-            results.append(item)            # Otherwise add to list
+            if len(results) >= limit: break         # Reached max length?
+            if item == sub: continue                # Ignore self-matches
+            if not is_image(item): continue         # Ignore non-images
+            results.append(item)                    # Otherwise add to list
         return results
 
 def spam_score(sub, depth=3, verbose=False):
     """Check if a given submission is likely spam."""
-    src = TitleSearch(sub.subreddit)
+    src = TitleSearch(sub.subreddit, verbose)
     alt_img, alt_score = src.compare(sub, limit=depth)
     if verbose and alt_img is None:
         print(f'No search results for title "{sub.title}"')

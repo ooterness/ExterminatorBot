@@ -11,6 +11,7 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 """
 
 import os, praw, queue, sys, threading
+from datetime import datetime
 from lib_images import is_image, spam_score
 from lib_users import any_replies_by, Suspicion
 from traceback import print_exc
@@ -28,6 +29,10 @@ def login(username):
         user_agent=f'script:ExterminatorBot:v0.1 (by /u/{username})',
     )
 
+def short_url(sub):
+    """Create a shorthand URL for the provided submission."""
+    return f'http://reddit.com/{sub.id}'
+
 class Exterminator:
     def __init__(self, username, subreddits, threads=DEFAULT_WORK_THREADS):
         """Create object and open a connection to Reddit servers."""
@@ -37,7 +42,9 @@ class Exterminator:
         self.src = self.reddit.subreddit('+'.join(subreddits))
         # Set default options.
         self.actions = []
-        self.search = DEFAULT_SEARCH_DEPTH
+        self.count_all = 0
+        self.count_spam = 0
+        self.search_depth = DEFAULT_SEARCH_DEPTH
         self.thresh_user = DEFAULT_THRESH_USER
         self.thresh_post = DEFAULT_THRESH_POST
         self.user = self.reddit.user.me()
@@ -60,7 +67,7 @@ class Exterminator:
 
     def set_search_depth(self, depth):
         """Set the number of images to cross-check in search results."""
-        self.search = depth
+        self.search_depth = depth
 
     def set_thresholds(self, user, post):
         self.thresh_user = user
@@ -108,36 +115,46 @@ class Exterminator:
         self.work.put(sub)                  # Add object to work queue
         return True                         # Accepted for processing
 
+    def log_label(self, sub):
+        return f'{datetime.now().isoformat()} {short_url(sub)}'
+
     def process(self, sub):
         """Process a submission object."""
-        print(f'Processing post: {sub.permalink}')
+        # Use shorthand URL in all log messages for this post.
+        print(f'{self.log_label(sub)} : Processing post...')
+        self.count_all += 1
         # Have we already processed on this post?
         if sub.likes is not None: return
         if any_replies_by(self.user, sub): return
         # Check the user who made the post.
         usr_score = Suspicion(sub.author).score_overall(self.verbose)
-        print(f'{sub.id}: User suspicion {100*usr_score:.1f}')
+        print(f'{self.log_label(sub)} : User suspicion {100*usr_score:.1f}')
         if usr_score < self.thresh_user: return
         # Execute a full image search.
-        alt_img, sub_score = spam_score(sub, self.search, self.verbose)
-        print(f'{sub.id}: Post suspicion {100*sub_score:.1f}')
+        alt_img, sub_score = spam_score(sub, self.search_depth, self.verbose)
+        print(f'{self.log_label(sub)} : Post suspicion {100*sub_score:.1f}')
         if sub_score < self.thresh_post: return
         # Take appropriate action.
+        self.count_spam += 1
         avg_score = 0.5 * (usr_score + sub_score)
-        msg_str = [
+        msg_long = [
             f'WARNING: /u/{sub.author} may be a spambot that [copy-pastes popular old posts]({alt_img.permalink}).',
             f'Confidence rating {100*avg_score:.1f}%.',
-            f'This bot is still in development and may make mistakes.',
+            f'This bot is still in development and sometimes makes mistakes.',
             f'[_Contact the developers?_](https://www.reddit.com/message/compose/?to={self.user})',
         ]
+        alt_url = short_url(alt_img)
+        msg_short = f'[Copy-paste spambot]({alt_url}), confidence {100*avg_score:.1f}%'
         if 'debug' in self.actions:
-            print(f'{sub.id}:' + '\n\t'.join(msg_str))
+            print(f'{self.log_label(sub)} : Suspicous post!\n\t'
+                + f'{msg_short}\n\t'
+                + '\n\t'.join(msg_long))
         if 'downvote' in self.actions:
             sub.downvote()  # Use sparingly!
         if 'reply' in self.actions:
-            sub.reply('\n\n'.join(msg_str))
+            sub.reply(body='\n\n'.join(msg_long))
         if 'report' in self.actions:
-            sub.report('\n\n'.join(msg_str))
+            sub.report(msg_short)
 
     def run_batch(self, limit):
         """Run this bot on the last N image submissions."""
@@ -193,6 +210,7 @@ if __name__ == '__main__':
             print(f'Fetching {args.limit} posts...')
             count = my_bot.run_batch(limit=args.limit)
             my_bot.wait()
+            print(f'Found {my_bot.count_spam} likely spam posts.')
     except KeyboardInterrupt:
         print('Exiting...')
         sys.exit(0)     # Not an error, just exit.
