@@ -32,33 +32,43 @@ class Suspicion:
         self.limit  = limit     # Search depth?
         self.user   = user      # PRAW Redditor object
         # Cache new posts (submissions + comments) for later use.
-        self.items  = list(user.new(limit=limit))
+        try:
+            self.items = list(user.new(limit=limit))
+        except:
+            self.items = []     # User deleted?
 
     def score_age(self):
         """Score based purely on account creation date."""
-        age = datetime.now() - datetime.fromtimestamp(self.user.created_utc)
-        ratio = age / timedelta(days = 180)
-        return np.exp(-3.0 * ratio)
+        if self.items:
+            age = datetime.now() - datetime.fromtimestamp(self.user.created_utc)
+            ratio = age / timedelta(days = 180)
+            return np.exp(-3.0 * ratio)
+        else:
+            return 0.0
 
     def score_count(self):
         """Score based on minimum post history."""
         ratio = len(self.items) / self.limit
-        return np.exp(-3.0 * ratio)
+        return np.exp(-3.0 * ratio) - 0.5
 
     def score_dormancy(self):
         """Score based on recent spikes in activity."""
-        num_old = len(list(self.user.top(time_filter="all", limit=2*self.limit)))
-        num_new = len(list(self.user.top(time_filter="month", limit=self.limit)))
-        ratio = (num_old - num_new) / self.limit
-        return logistic(3.0 * ratio)
+        if self.items:
+            num_old = len(list(self.user.top(time_filter="all", limit=2*self.limit)))
+            num_new = len(list(self.user.top(time_filter="month", limit=self.limit)))
+            ratio = (num_old - num_new) / num_old
+            return logistic(-6.0 * ratio)
+        else:
+            return 0.0
 
     def score_images(self):
         """Score based on density of image posts."""
-        score = 0
+        score = -2  # Innocent until proven guilty
         for item in self.items:
             if is_image(item):  score += 1
             else:               score -= 2
-        return logistic(3.0 * score / self.limit)
+        limit = min(self.limit, 1 + len(self.items))
+        return logistic(3.0 * score / limit)
 
     def score_scum(self):
         """Has this user ever posted to a suspicious subreddit?"""
@@ -68,14 +78,20 @@ class Suspicion:
                 if pattern in item.permalink: return 1.0
         return 0.0
 
-    def score_overall(self):
+    def score_overall(self, verbose=False):
         """Overall score based on all other factors."""
-        # TODO: This needs a lot tuning. Not currently useful.
-        return logistic(
-            -1.0 # Innocent until proven guilty
-            +0.5 * self.score_age()
-            +0.5 * self.score_count()
-            +0.5 * self.score_dormancy()
-            +1.0 * self.score_images()
-            +3.0 * self.score_scum()
-        )
+        scores = [
+            1.0 * self.score_age(),
+            1.0 * self.score_count(),
+            1.0 * self.score_dormancy(),
+            3.0 * self.score_images(),
+            3.0 * self.score_scum(),
+        ]
+        # Final score is biased negative (innocent until proven guilty).
+        final_score = logistic(3.0 * (sum(scores) - 1.0))
+        # Log additional diagnostics?
+        if verbose:
+            score_str = ', '.join([f'{x:.2f}' for x in scores])
+            print(f'User {self.user}: Overall score {100*final_score:.1f}%')
+            print(f'  Weights: {score_str}')
+        return final_score

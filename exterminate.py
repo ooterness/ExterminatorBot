@@ -11,30 +11,36 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 """
 
 import os, praw, queue, sys, threading
-from lib_images import is_image, TitleSearch
+from lib_images import is_image, spam_score
 from lib_users import Suspicion
 from traceback import print_exc
 
 # Default configuration options.
 DEFAULT_RUN_LIMIT       = 10    # Number of posts to process in batch mode
 DEFAULT_SEARCH_DEPTH    = 3     # Number of image results to cross-check
+DEFAULT_THRESH_POST     = 0.5   # Ignore posts below this threshold
+DEFAULT_THRESH_USER     = 0.5   # Ignore users below this threshold
 DEFAULT_WORK_THREADS    = 1     # Number of worker threads
+
+def login(username):
+    """Create PRAW object using credentials from "praw.ini"."""
+    return praw.Reddit(username, config_interpolation='basic',
+        user_agent=f'script:ExterminatorBot:v0.1 (by /u/{username})',
+    )
 
 class Exterminator:
     def __init__(self, username, subreddits, threads=DEFAULT_WORK_THREADS):
-        """
-        Create object and open a connection to Reddit servers.
-        Credentials are pulled from the specified section of "praw.ini".
-        """
-        # Open the connection and confirm we're logged in.
-        self.reddit = praw.Reddit(username, config_interpolation='basic',
-            user_agent=f'script:ExterminatorBot:v0.1 (by /u/{username})',
-        )
+        """Create object and open a connection to Reddit servers."""
+        # Open the connection to Reddit.
+        self.reddit = login(username)
         # Select source subreddits by name.
         self.src = self.reddit.subreddit('+'.join(subreddits))
-        self.cmp = TitleSearch(self.src)
         # Set default options.
+        self.actions = []
         self.search = DEFAULT_SEARCH_DEPTH
+        self.thresh_user = DEFAULT_THRESH_USER
+        self.thresh_post = DEFAULT_THRESH_POST
+        self.user = self.reddit.user.me()
         # Initialize the work queue.
         self.pool = []
         self.run  = True
@@ -46,9 +52,17 @@ class Exterminator:
             thread.start()
             self.pool.append(thread)
 
+    def set_responses(self, verbs):
+        """Set permissible responses to a suspicious post."""
+        self.actions = [str(v).lower() for v in verbs]
+
     def set_search_depth(self, depth):
         """Set the number of images to cross-check in search results."""
         self.search = depth
+
+    def set_thresholds(self, user, post):
+        self.thresh_user = user
+        self.thresh_post = post
 
     def close(self):
         """Stop all worker threads and purge work queue."""
@@ -63,7 +77,7 @@ class Exterminator:
     def login_test(self):
         """Login successful? Print status message."""
         print('Did somebody call for an exterminator?')
-        print(f'Logged in as "{self.reddit.user.me()}"')
+        print(f'Logged in as "{self.user}"')
 
     def work_fn(self):
         """Main work loop.  Do not call directly."""
@@ -95,15 +109,27 @@ class Exterminator:
     def process(self, sub):
         """Process a submission object."""
         print(f'Processing post: {sub.permalink}')
-        # Search for potential matches.
-        sus_score = Suspicion(sub.author).score_overall()
-        print(f'User suspicion {100*sus_score:.1f}')
-        # TODO: Early termination if user score is OK?
-        alt_img, alt_score = self.cmp.compare(sub, limit=self.search)
-        if alt_img is None:
-            print(f'No search results for title "{sub.title}"')
-        else:
-            print(f'Best match ({100*alt_score:.1f}, {100*sus_score:0.1f}): {alt_img.permalink}')
+        # Check the user first.
+        usr_score = Suspicion(sub.author).score_overall()
+        print(f'{sub.id}: User suspicion {100*usr_score:.1f}')
+        if usr_score < self.thresh_user: return
+        # Execute a full image search.
+        alt_img, sub_score = spam_score(sub, self.search)
+        print(f'{sub.id}: Post suspicion {100*sub_score:.1f}')
+        if sub_score < self.thresh_post: return
+        # Take appropriate action.
+        avg_score = 0.5 * (usr_score + sub_score)
+        msg_str = [
+            f'WARNING: /u/{sub.author} may be a spambot that [copy-pastes popular old posts]({alt_img.permalink}).',
+            f'Confidence rating {100*avg_score:.1f}%.',
+            f'_[Contact the developers of this bot?](https://www.reddit.com/message/compose/?to={self.user})_',
+        ]
+        if 'debug' in self.actions:
+            print(f'{sub.id}:' + '\n\t'.join(msg_str))
+        if 'reply' in self.actions:
+            sub.reply('\n\n'.join(msg_str))
+        if 'report' in self.actions:
+            sub.report('\n\n'.join(msg_str))
 
     def run_batch(self, limit):
         """Run this bot on the last N image submissions."""
@@ -125,21 +151,29 @@ if __name__ == '__main__':
         description = 'ExterminatorBot finds and flags certain types of spam on Reddit.')
     parser.add_argument('subs', nargs='+', type=str,
         help='List of subreddit(s) to be monitored.')
+    parser.add_argument('--actions', type=str, nargs='+', default=[],
+        help='Set possible response(s) to suspicious posts. [reply, report]')
     parser.add_argument('--forever', action='store_true',
         help='Run forever. Ignores "limit" if set.')
     parser.add_argument('--limit', type=int, default=DEFAULT_RUN_LIMIT,
         help='Set the number of posts to process in batch mode.')
+    parser.add_argument('--login', type=str, required=True,
+        help='Reddit username and praw.ini label for login credentials.')
     parser.add_argument('--search', type=int, default=DEFAULT_SEARCH_DEPTH,
         help='Set the number of search results to process.')
+    parser.add_argument('--sus_post', type=float, default=DEFAULT_THRESH_POST,
+        help='Set the threshold for suspicious posts.')
+    parser.add_argument('--sus_user', type=float, default=DEFAULT_THRESH_USER,
+        help='Set the threshold for suspicious users.')
     parser.add_argument('--threads', type=int, default=DEFAULT_WORK_THREADS,
         help='Set the number of worker threads.')
-    parser.add_argument('--user', type=str, required=True,
-        help='Reddit username and praw.ini label for login credentials.')
     args = parser.parse_args()
 
     # Initial setup.
-    my_bot = Exterminator(args.user, args.subs, args.threads)
+    my_bot = Exterminator(args.login, args.subs, args.threads)
+    my_bot.set_responses(args.actions)
     my_bot.set_search_depth(args.search)
+    my_bot.set_thresholds(args.sus_user, args.sus_post)
     my_bot.login_test()
 
     # Run the main loop.

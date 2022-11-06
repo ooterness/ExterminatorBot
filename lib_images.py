@@ -124,3 +124,13 @@ class TitleSearch:
             if not is_image(item): continue # Ignore non-images
             results.append(item)            # Otherwise add to list
         return results
+
+def spam_score(sub, depth=3, verbose=False):
+    """Check if a given submission is likely spam."""
+    src = TitleSearch(sub.subreddit)
+    alt_img, alt_score = src.compare(sub, limit=depth)
+    if verbose and alt_img is None:
+        print(f'No search results for title "{sub.title}"')
+    elif verbose:
+        print(f'Best match ({100*alt_score:.1f}%): {alt_img.permalink}')
+    return alt_img, alt_score
