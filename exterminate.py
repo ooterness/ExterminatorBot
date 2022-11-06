@@ -41,6 +41,7 @@ class Exterminator:
         self.thresh_user = DEFAULT_THRESH_USER
         self.thresh_post = DEFAULT_THRESH_POST
         self.user = self.reddit.user.me()
+        self.verbose = False
         # Initialize the work queue.
         self.pool = []
         self.run  = True
@@ -55,6 +56,7 @@ class Exterminator:
     def set_responses(self, verbs):
         """Set permissible responses to a suspicious post."""
         self.actions = [str(v).lower() for v in verbs]
+        self.verbose = 'debug' in self.actions
 
     def set_search_depth(self, depth):
         """Set the number of images to cross-check in search results."""
@@ -110,11 +112,11 @@ class Exterminator:
         """Process a submission object."""
         print(f'Processing post: {sub.permalink}')
         # Check the user first.
-        usr_score = Suspicion(sub.author).score_overall()
+        usr_score = Suspicion(sub.author).score_overall(self.verbose)
         print(f'{sub.id}: User suspicion {100*usr_score:.1f}')
         if usr_score < self.thresh_user: return
         # Execute a full image search.
-        alt_img, sub_score = spam_score(sub, self.search)
+        alt_img, sub_score = spam_score(sub, self.search, self.verbose)
         print(f'{sub.id}: Post suspicion {100*sub_score:.1f}')
         if sub_score < self.thresh_post: return
         # Take appropriate action.
@@ -152,7 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('subs', nargs='+', type=str,
         help='List of subreddit(s) to be monitored.')
     parser.add_argument('--actions', type=str, nargs='+', default=[],
-        help='Set possible response(s) to suspicious posts. [reply, report]')
+        help='Set possible response(s) to suspicious posts. [debug, reply, report]')
     parser.add_argument('--forever', action='store_true',
         help='Run forever. Ignores "limit" if set.')
     parser.add_argument('--limit', type=int, default=DEFAULT_RUN_LIMIT,
