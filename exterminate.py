@@ -12,7 +12,7 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 
 import os, praw, queue, sys, threading
 from lib_images import is_image, spam_score
-from lib_users import Suspicion
+from lib_users import any_replies_by, Suspicion
 from traceback import print_exc
 
 # Default configuration options.
@@ -111,7 +111,10 @@ class Exterminator:
     def process(self, sub):
         """Process a submission object."""
         print(f'Processing post: {sub.permalink}')
-        # Check the user first.
+        # Have we already processed on this post?
+        if sub.likes is not None: return
+        if any_replies_by(self.user, sub): return
+        # Check the user who made the post.
         usr_score = Suspicion(sub.author).score_overall(self.verbose)
         print(f'{sub.id}: User suspicion {100*usr_score:.1f}')
         if usr_score < self.thresh_user: return
@@ -124,10 +127,13 @@ class Exterminator:
         msg_str = [
             f'WARNING: /u/{sub.author} may be a spambot that [copy-pastes popular old posts]({alt_img.permalink}).',
             f'Confidence rating {100*avg_score:.1f}%.',
-            f'_[Contact the developers of this bot?](https://www.reddit.com/message/compose/?to={self.user})_',
+            f'This bot is still in development and may make mistakes.',
+            f'[_Contact the developers?_](https://www.reddit.com/message/compose/?to={self.user})',
         ]
         if 'debug' in self.actions:
             print(f'{sub.id}:' + '\n\t'.join(msg_str))
+        if 'downvote' in self.actions:
+            sub.downvote()  # Use sparingly!
         if 'reply' in self.actions:
             sub.reply('\n\n'.join(msg_str))
         if 'report' in self.actions:
@@ -154,7 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('subs', nargs='+', type=str,
         help='List of subreddit(s) to be monitored.')
     parser.add_argument('--actions', type=str, nargs='+', default=[],
-        help='Set possible response(s) to suspicious posts. [debug, reply, report]')
+        help='Set possible response(s) to suspicious posts. [debug, downvote, reply, report]')
     parser.add_argument('--forever', action='store_true',
         help='Run forever. Ignores "limit" if set.')
     parser.add_argument('--limit', type=int, default=DEFAULT_RUN_LIMIT,

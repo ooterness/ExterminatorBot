@@ -12,12 +12,20 @@ include account age, number of comments vs. image posts, etc.
 
 import numpy as np
 from datetime import datetime, timedelta
-from lib_images import is_image
+from lib_images import is_comment, is_image
 
 HIVES_OF_SCUM_AND_VILLAINY = [
     '/r/freekarma4u',
     '/r/freekarma4you',
 ]
+
+def any_replies_by(user, sub):
+    """Any posts by the designated user in the designated submission?"""
+    sub.comments.replace_more(limit=None)
+    for comment in sub.comments:
+        if comment.author is None: continue
+        if comment.author.name == user.name: return True
+    return False
 
 def logistic(x):
     """Symmetric logistic function, aka soft-step."""
@@ -63,10 +71,10 @@ class Suspicion:
 
     def score_images(self):
         """Score based on density of image posts."""
-        score = -2  # Innocent until proven guilty
+        score = -1  # Innocent until proven guilty
         for item in self.items:
-            if is_image(item):  score += 1
-            else:               score -= 2
+            if is_comment(item):    score -= 2
+            elif is_image(item):    score += 1
         limit = min(self.limit, 1 + len(self.items))
         return logistic(3.0 * score / limit)
 
@@ -81,7 +89,7 @@ class Suspicion:
     def score_overall(self, verbose=False):
         """Overall score based on all other factors."""
         scores = [
-            1.0 * self.score_age(),
+            0.6 * self.score_age(),
             1.0 * self.score_count(),
             1.0 * self.score_dormancy(),
             3.0 * self.score_images(),

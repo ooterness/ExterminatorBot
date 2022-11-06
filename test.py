@@ -14,12 +14,19 @@ import os, praw, sys
 from argparse import ArgumentParser
 from exterminate import login
 from lib_images import spam_score
-from lib_users import Suspicion
+from lib_users import any_replies_by, Suspicion
+
+def get_sub(reddit, post):
+    """Get Reddit Submission object by full-length URL or short ID."""
+    if post.startswith('http'):
+        return praw.models.Submission(reddit=reddit, url=post)
+    else:
+        return praw.models.Submission(reddit=reddit, id=post)
 
 if __name__ == '__main__':
     # Parse command-line arguments.
-    parser = ArgumentParser('exterminate',
-        description = 'ExterminatorBot finds and flags certain types of spam on Reddit.')
+    parser = ArgumentParser('test',
+        description = 'Testing and diagnostics for ExterminatorBot functions.')
     parser
     parser.add_argument('--login', type=str, required=True,
         help='Reddit username and praw.ini label for login credentials.')
@@ -34,11 +41,10 @@ if __name__ == '__main__':
 
     # Run each requested test.
     for post in args.post:
-        if post.startswith('http'):
-            sub = praw.models.Submission(reddit=reddit, url=post)
-        else:
-            sub = praw.models.Submission(reddit=reddit, id=post)
+        sub = get_sub(reddit, post)
         spam_score(sub, verbose=True)
+        chk = any_replies_by(reddit.user.me(), sub)
+        print(f'Replies by {reddit.user.me()}? {chk}')
 
     for name in args.user:
         user = praw.models.Redditor(reddit=reddit, name=name)

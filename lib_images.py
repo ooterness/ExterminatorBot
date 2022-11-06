@@ -18,11 +18,15 @@ flann = cv2.FlannBasedMatcher(
     dict(),                         # Search parameters
 )
 
+def is_comment(sub):
+    """Is this comment/submission a comment?"""
+    return hasattr(sub, 'body')
+
 def is_image(sub):
     """Is this comment/submission a valid image post?"""
     # Ignore text posts and non-Reddit image hosts.
     # TODO: Support for albums? For now, only single images.
-    if hasattr(sub, 'body'): return False           # Ignore comments
+    if is_comment(sub): return False                # Ignore comments
     if sub.is_self: return False                    # Ignore text posts
     if not 'i.redd.it' in sub.url: return False     # Ignore other hosts
     # Is the link to a supported file format?
