@@ -10,30 +10,23 @@ For more information, refer to the instructions here:
 https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html#praw-ini
 """
 
-import os, praw, queue, sys, threading
-from datetime import datetime
-from lib_images import is_image, spam_score
-from lib_users import any_replies_by, Suspicion
+import queue, sys, threading
+from lib_penalizer import Penalizer
+from lib_reddit import any_replies_by, is_image, login
+from lib_scanner import Scanner
 from traceback import print_exc
 
 # Default configuration options.
+DEFAULT_API_TIMEOUT     = 1200  # Max value to obey for rate-limit requests
 DEFAULT_RUN_LIMIT       = 10    # Number of posts to process in batch mode
 DEFAULT_SEARCH_DEPTH    = 3     # Number of image results to cross-check
 DEFAULT_THRESH_POST     = 0.5   # Ignore posts below this threshold
 DEFAULT_THRESH_USER     = 0.5   # Ignore users below this threshold
 DEFAULT_WORK_THREADS    = 1     # Number of worker threads
 
-def login(username):
-    """Create PRAW object using credentials from "praw.ini"."""
-    return praw.Reddit(username, config_interpolation='basic',
-        user_agent=f'script:ExterminatorBot:v0.1 (by /u/{username})',
-    )
-
-def short_url(sub):
-    """Create a shorthand URL for the provided submission."""
-    return f'http://reddit.com/{sub.id}'
-
 class Exterminator:
+    """Top-level ` including all scanner and penalizer workers."""
+
     def __init__(self, username, subreddits, threads=DEFAULT_WORK_THREADS):
         """Create object and open a connection to Reddit servers."""
         # Open the connection to Reddit.
@@ -41,24 +34,26 @@ class Exterminator:
         # Select source subreddits by name.
         self.src = self.reddit.subreddit('+'.join(subreddits))
         # Set default options.
-        self.actions = []
-        self.count_all = 0
-        self.count_spam = 0
+        self.run  = True                # Continue running?
         self.search_depth = DEFAULT_SEARCH_DEPTH
+        self.subreddits = '+'.join(subreddits)
         self.thresh_user = DEFAULT_THRESH_USER
         self.thresh_post = DEFAULT_THRESH_POST
+        self.timeout = DEFAULT_API_TIMEOUT
         self.user = self.reddit.user.me()
+        self.username = username
         self.verbose = False
-        # Initialize the work queue.
-        self.pool = []
-        self.run  = True
-        self.work = queue.Queue()
+        # Start the action thread and its work queue.
+        # Actions that post comments or reports MUST be single-threaded.
+        self.spam = queue.Queue()       # Confirmed spam posts
+        self.penalizer = Penalizer(self)
+        # Initialize the work queue and a pool of analysis threads.
+        # Read-only actions aren't likely to trip spam-filters.
+        self.pool = []                  # List of Scanner objects
+        self.work = queue.Queue()       # Queued analysis tasks
         # Start each of the worker threads.
         for n in range(threads):
-            thread = threading.Thread(target=self.work_fn)
-            thread.daemon = True
-            thread.start()
-            self.pool.append(thread)
+            self.pool.append(Scanner(self))
 
     def set_responses(self, verbs):
         """Set permissible responses to a suspicious post."""
@@ -77,33 +72,18 @@ class Exterminator:
         """Stop all worker threads and purge work queue."""
         print('Closing. Please wait...')
         self.run = False
+        with self.spam.mutex: self.spam.queue.clear()
         with self.work.mutex: self.work.queue.clear()
 
     def wait(self):
         """Wait for all currently queued work to finish."""
         self.work.join()
+        self.spam.join()
 
     def login_test(self):
         """Login successful? Print status message."""
         print('Did somebody call for an exterminator?')
         print(f'Logged in as "{self.user}"')
-
-    def work_fn(self):
-        """Main work loop.  Do not call directly."""
-        while self.run:
-            try:
-                # Attempt to process the next task.
-                sub = self.work.get()
-                self.process(sub)
-            except KeyboardInterrupt:
-                # User-requested exit, stop all threads.
-                self.close()
-            except Exception:
-                # Log ordinary errors, but resume processing.
-                print(f'Error processing {sub.permalink}')
-                print_exc(file=sys.stderr)
-            finally:
-                self.work.task_done()
 
     def enqueue(self, sub):
         """Queue a submission object for processing."""
@@ -112,49 +92,8 @@ class Exterminator:
         if sub.stickied: return False       # Already has moderator attention
         if not is_image(sub): return False  # Links to a supported image?
         # Otherwise, queue the object for later processing.
-        self.work.put(sub)                  # Add object to work queue
+        self.work.put(sub.id)               # Add object to work queue
         return True                         # Accepted for processing
-
-    def log_label(self, sub):
-        return f'{datetime.now().isoformat()} {short_url(sub)}'
-
-    def process(self, sub):
-        """Process a submission object."""
-        # Use shorthand URL in all log messages for this post.
-        print(f'{self.log_label(sub)} : Processing post...')
-        self.count_all += 1
-        # Have we already processed on this post?
-        if sub.likes is not None: return
-        if any_replies_by(self.user, sub): return
-        # Check the user who made the post.
-        usr_score = Suspicion(sub.author).score_overall(self.verbose)
-        print(f'{self.log_label(sub)} : User suspicion {100*usr_score:.1f}')
-        if usr_score < self.thresh_user: return
-        # Execute a full image search.
-        alt_img, sub_score = spam_score(sub, self.search_depth, self.verbose)
-        print(f'{self.log_label(sub)} : Post suspicion {100*sub_score:.1f}')
-        if sub_score < self.thresh_post: return
-        # Take appropriate action.
-        self.count_spam += 1
-        avg_score = 0.5 * (usr_score + sub_score)
-        msg_long = [
-            f'WARNING: /u/{sub.author} may be a spambot that [copy-pastes popular old posts]({alt_img.permalink}).',
-            f'Confidence rating {100*avg_score:.1f}%.',
-            f'This bot is still in development and sometimes makes mistakes.',
-            f'[_Contact the developers?_](https://www.reddit.com/message/compose/?to={self.user})',
-        ]
-        alt_url = short_url(alt_img)
-        msg_short = f'[Copy-paste spambot]({alt_url}), confidence {100*avg_score:.1f}%'
-        if 'debug' in self.actions:
-            print(f'{self.log_label(sub)} : Suspicous post!\n\t'
-                + f'{msg_short}\n\t'
-                + '\n\t'.join(msg_long))
-        if 'downvote' in self.actions:
-            sub.downvote()  # Use sparingly!
-        if 'reply' in self.actions:
-            sub.reply(body='\n\n'.join(msg_long))
-        if 'report' in self.actions:
-            sub.report(msg_short)
 
     def run_batch(self, limit):
         """Run this bot on the last N image submissions."""
@@ -210,7 +149,6 @@ if __name__ == '__main__':
             print(f'Fetching {args.limit} posts...')
             count = my_bot.run_batch(limit=args.limit)
             my_bot.wait()
-            print(f'Found {my_bot.count_spam} likely spam posts.')
     except KeyboardInterrupt:
         print('Exiting...')
         sys.exit(0)     # Not an error, just exit.

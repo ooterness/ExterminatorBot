@@ -11,6 +11,7 @@ searching for related images in the same subreddit.
 import cv2, os, re, requests
 import numpy as np
 from datetime import datetime, timedelta
+from lib_reddit import is_image, log_prefix
 from unidecode import unidecode
 
 # Shared objects for SIFT processing.
@@ -23,28 +24,11 @@ flann = cv2.FlannBasedMatcher(
 # Threshold for date/time tiebreakers.
 DATE_THRESHOLD = timedelta(seconds = 1)
 
-def is_comment(sub):
-    """Is this comment/submission a comment?"""
-    return hasattr(sub, 'body')
-
-def is_image(sub):
-    """Is this comment/submission a valid image post?"""
-    # Ignore text posts and non-Reddit image hosts.
-    # TODO: Support for albums? For now, only single images.
-    if is_comment(sub): return False                # Ignore comments
-    if sub.is_self: return False                    # Ignore text posts
-    if not 'i.redd.it' in sub.url: return False     # Ignore other hosts
-    # Is the link to a supported file format?
-    # TODO: Use MIME headers instead of guessing from extension?
-    [name, ext] = os.path.splitext(sub.url)         # Extension from URL
-    if not ext in ['.jpg', '.png']: return False    # Unsupported image?
-    return True                                     # All checks OK
-
 class ImageObject:
     """An image associated with a Reddit submission."""
     def __init__(self, sub, verbose=False):
         """Create an object from the designated submission."""
-        if verbose: print(f'Loading {sub.permalink}')
+        if verbose: print(f'{log_prefix(sub)} : Loading image.')
         self.date = datetime.fromtimestamp(sub.created_utc)
         self.req = requests.get(sub.url)
         self.sub = sub
@@ -70,7 +54,7 @@ class ImageObject:
 
     def save(self, path='temp'):
         """Save underlying image as a local file."""
-        print(f'Saving post: {self.sub.title} by {self.sub.author}')
+        print(f'{log_prefix(self.sub)} : Saving post "{self.sub.title}" by {self.sub.author}')
         if not os.path.exists(path): os.makedirs(path)
         out_name = os.path.join(path, os.path.basename(self.sub.url))
         with open(out_name, 'wb') as out_file:
@@ -150,7 +134,7 @@ def spam_score(sub, depth=3, verbose=False):
     src = TitleSearch(sub.subreddit, verbose)
     alt_img, alt_score = src.compare(sub, limit=depth)
     if verbose and alt_img is None:
-        print(f'No search results for title "{sub.title}"')
+        print(f'{log_prefix(sub)} : No search results for title "{sub.title}"')
     elif verbose:
-        print(f'Best match ({100*alt_score:.1f}%): {alt_img.permalink}')
+        print(f'{log_prefix(sub)} : Best match ({100*alt_score:.1f}%)\n\t{alt_img.permalink}')
     return alt_img, alt_score

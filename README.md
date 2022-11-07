@@ -3,17 +3,18 @@ Prototype of a [Reddit bot](https://www.reddit.com/user/ExterminatorBot) for fin
 
 # Goals
 For now, the primary goals for this project are to find identify specific types of spam:
-* Karma-farmers that copy-paste old popular posts.
-* Redbubble scammers selling knockoff mugs and T-shirts.
+* (Functional) Karma-farmers that copy-paste old popular posts.
+* (Coming soon?) Redbubble scammers selling knockoff mugs and T-shirts.
 
 It's astonishing how little Reddit administrators do to stop these obvious bots.
 
-At present, ExterminatorBot is "read-only" and takes no further action.
-It's just running experiments to see if the concept is worth pursuing further.
-
-If these experiments succeed, the next step is to contact moderators of specific subreddits.
-If they opt-in, then high-confidence alarms may post comments, file reports, or take other actions.
+By default, the bot acts in "read-only" mode to detect spammers.
+If configured, the bot can also take action against high-confidence spam posts.
+Actions are enabled separately, and include filing reports and posting comment replies.
+Before enabling such actions, please coordinate with subreddit moderators.
 
 # Contact
 Interested in helping? Or having this bot help moderate your subreddit?
 [Please PM the bot's Reddit account](https://www.reddit.com/user/ExterminatorBot).
+
+Copyright 2022 by [Alex Utter](https://www.reddit.com/user/ooterness).

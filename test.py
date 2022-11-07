@@ -12,16 +12,9 @@ https://praw.readthedocs.io/en/stable/getting_started/configuration/prawini.html
 
 import os, praw, sys
 from argparse import ArgumentParser
-from exterminate import login
 from lib_images import spam_score
-from lib_users import any_replies_by, Suspicion
-
-def get_sub(reddit, post):
-    """Get Reddit Submission object by full-length URL or short ID."""
-    if post.startswith('http'):
-        return praw.models.Submission(reddit=reddit, url=post)
-    else:
-        return praw.models.Submission(reddit=reddit, id=post)
+from lib_reddit import any_replies_by, get_sub, login
+from lib_users import Suspicion
 
 if __name__ == '__main__':
     # Parse command-line arguments.

@@ -12,20 +12,12 @@ include account age, number of comments vs. image posts, etc.
 
 import numpy as np
 from datetime import datetime, timedelta
-from lib_images import is_comment, is_image
+from lib_reddit import is_comment, is_image, log_prefix
 
 HIVES_OF_SCUM_AND_VILLAINY = [
     '/r/freekarma4u',
     '/r/freekarma4you',
 ]
-
-def any_replies_by(user, sub):
-    """Any posts by the designated user in the designated submission?"""
-    sub.comments.replace_more(limit=None)
-    for comment in sub.comments:
-        if comment.author is None: continue
-        if comment.author.name == user.name: return True
-    return False
 
 def logistic(x):
     """Symmetric logistic function, aka soft-step."""
@@ -100,6 +92,6 @@ class Suspicion:
         # Log additional diagnostics?
         if verbose:
             score_str = ', '.join([f'{x:.2f}' for x in scores])
-            print(f'User {self.user}: Overall score {100*final_score:.1f}%')
-            print(f'  Weights: {score_str}')
+            print(f'{log_prefix(self.user)} : User {self.user} = {100*final_score:.1f}%\n'
+                + f'\tWeights: {score_str}')
         return final_score
