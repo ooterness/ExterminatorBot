@@ -10,6 +10,7 @@ searching for related images in the same subreddit.
 
 import cv2, os, requests
 import numpy as np
+from datetime import datetime, timedelta
 
 # Shared objects for SIFT processing.
 sift = cv2.SIFT_create()
@@ -17,6 +18,9 @@ flann = cv2.FlannBasedMatcher(
     dict(algorithm=0, trees=5),     # Index parameters
     dict(),                         # Search parameters
 )
+
+# Threshold for date/time tiebreakers.
+DATE_THRESHOLD = timedelta(seconds = 1)
 
 def is_comment(sub):
     """Is this comment/submission a comment?"""
@@ -40,6 +44,7 @@ class ImageObject:
     def __init__(self, sub, verbose=False):
         """Create an object from the designated submission."""
         if verbose: print(f'Loading {sub.permalink}')
+        self.date = datetime.fromtimestamp(sub.created_utc)
         self.req = requests.get(sub.url)
         self.sub = sub
 
@@ -86,6 +91,7 @@ def compare(ref, alt, verbose=False):
     kp_ref, dsc_ref = img_ref.sift(False)           # Original
     kp_rem, dsc_rem = img_ref.sift(True)            # Mirror
     best_index = 0
+    best_date  = img_ref.date
     best_score = 0.0
     for (n, img) in enumerate(img_alt):
         # Attempt to find matching keypoint pairs.
@@ -100,8 +106,10 @@ def compare(ref, alt, verbose=False):
         ratio1 = len(good1) / len(dsc_ref)
         ratio2 = len(good2) / len(dsc_rem)
         score = max(ratio1, ratio2)
-        # Update the running best.
-        if score > best_score:
+        # Update the running best.  In case of tie, pick the oldest.
+        diff_date  = best_date - img.date           # + = Older post
+        diff_score = score - best_score             # + = Better match
+        if (diff_score > 0.0) or (diff_date > DATE_THRESHOLD and diff_score >= 0.0):
             best_index = n
             best_score = score
     # Return the best match and its score.
