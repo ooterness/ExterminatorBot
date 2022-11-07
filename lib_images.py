@@ -8,9 +8,10 @@ Includes tools for downloading image data, comparing images, and
 searching for related images in the same subreddit.
 """
 
-import cv2, os, requests
+import cv2, os, re, requests
 import numpy as np
 from datetime import datetime, timedelta
+from unidecode import unidecode
 
 # Shared objects for SIFT processing.
 sift = cv2.SIFT_create()
@@ -129,7 +130,13 @@ class TitleSearch:
 
     def search(self, sub, limit):
         """Given a Reddit submission, search for related titles."""
-        listing = self.src.search(query=sub.title)
+        # Normalize title before we search.
+        SEARCH_CHARS = '[^A-Za-z0-9\']+'            # Whitelist A-Z, 0-9, '
+        query = unidecode(sub.title)                # Replace accents etc.
+        query = re.sub(SEARCH_CHARS, ' ', query)    # Replace any non-words
+        query = re.sub('\s+', ' ', query.strip())   # Combine consecutive whitespace
+        # Execute the search.
+        listing = self.src.search(query=query)
         results = []
         for item in listing:
             if len(results) >= limit: break         # Reached max length?
